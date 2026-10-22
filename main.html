@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Proportion Calculator</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      max-width: 760px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      line-height: 1.4;
+    }
+
+    label {
+      display: block;
+      margin-top: 1rem;
+      font-weight: 600;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 0.5rem;
+      margin-top: 0.25rem;
+      font: inherit;
+    }
+
+    textarea {
+      min-height: 10rem;
+      font-family: monospace;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin-top: 1rem;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border: 1px solid #ccc;
+      padding: 0.35rem 0.5rem;
+      text-align: right;
+    }
+
+    th:first-child,
+    td:first-child,
+    th:nth-child(2),
+    td:nth-child(2) {
+      text-align: left;
+    }
+
+    .note {
+      color: #555;
+      margin-top: 0.5rem;
+      white-space: pre-line;
+    }
+
+    .error {
+      color: #b00020;
+      margin-top: 1rem;
+      white-space: pre-line;
+    }
+  </style>
+</head>
+<body>
+  <h1>Proportion calculator</h1>
+
+  <label for="total">Total units</label>
+  <input id="total" type="number" min="0" step="any" placeholder="e.g. 100">
+
+  <label for="numbers">Numbers, one per line</label>
+  <textarea id="numbers" placeholder="10&#10;20&#10;30"></textarea>
+
+  <div id="message"></div>
+  <div id="result"></div>
+
+  <script>
+    const totalEl = document.getElementById("total");
+    const numbersEl = document.getElementById("numbers");
+    const messageEl = document.getElementById("message");
+    const resultEl = document.getElementById("result");
+
+    const fmt = new Intl.NumberFormat(undefined, {
+      maximumFractionDigits: 6
+    });
+
+    function parseLines(text) {
+      return text
+        .split(/\r?\n/)
+        .map((line, index) => ({
+          line: index + 1,
+          raw: line.trim()
+        }))
+        .filter(item => item.raw !== "")
+        .map(item => {
+          const value = Number(item.raw);
+          return {
+            ...item,
+            value,
+            valid: Number.isFinite(value)
+          };
+        });
+    }
+
+    function exactShares(total, weights) {
+      const sum = weights.reduce((a, b) => a + b, 0);
+
+      if (weights.length === 0) {
+        return [];
+      }
+
+      if (sum === 0) {
+        return weights.map(() => total / weights.length);
+      }
+
+      return weights.map(weight => total * weight / sum);
+    }
+
+    function wholeApportionment(total, weights) {
+      const shares = exactShares(total, weights);
+
+      const floors = shares.map(x => Math.floor(x + 1e-9));
+      let remaining = total - floors.reduce((a, b) => a + b, 0);
+
+      if (remaining < 0) {
+        const order = floors
+          .map((value, index) => ({ index, value }))
+          .sort((a, b) => b.value - a.value || a.index - b.index);
+
+        for (let i = 0; i < -remaining; i++) {
+          floors[order[i % order.length].index]--;
+        }
+
+        remaining = 0;
+      }
+
+      const byRemainder = shares
+        .map((value, index) => ({
+          index,
+          frac: value - Math.floor(value + 1e-9)
+        }))
+        .sort((a, b) => b.frac - a.frac || a.index - b.index);
+
+      for (let i = 0; i < remaining; i++) {
+        floors[byRemainder[i % byRemainder.length].index]++;
+      }
+
+      return floors;
+    }
+
+    function renderMessage(text, className) {
+      messageEl.className = className;
+      messageEl.textContent = text;
+    }
+
+    function update() {
+      messageEl.className = "";
+      messageEl.textContent = "";
+      resultEl.innerHTML = "";
+
+      const entries = parseLines(numbersEl.value);
+
+      if (entries.length === 0) {
+        return;
+      }
+
+      const totalText = totalEl.value.trim();
+
+      if (totalText === "") {
+        renderMessage("Enter a total number of units.", "note");
+        return;
+      }
+
+      const total = Number(totalText);
+
+      if (!Number.isFinite(total)) {
+        renderMessage("Total must be a number.", "error");
+        return;
+      }
+
+      if (total < 0) {
+        renderMessage("Total cannot be negative.", "error");
+        return;
+      }
+
+      const invalid = entries.filter(entry => !entry.valid);
+
+      if (invalid.length > 0) {
+        renderMessage(
+          "Non-numeric line(s): " + invalid.map(entry => entry.line).join(", "),
+          "error"
+        );
+        return;
+      }
+
+      const negative = entries.filter(entry => entry.value < 0);
+
+      if (negative.length > 0) {
+        renderMessage(
+          "Negative number(s) on line(s): " + negative.map(entry => entry.line).join(", "),
+          "error"
+        );
+        return;
+      }
+
+      const weights = entries.map(entry => entry.value);
+      const shares = exactShares(total, weights);
+      const isWholeTotal = Number.isInteger(total);
+      const whole = isWholeTotal ? wholeApportionment(total, weights) : null;
+      const sumWeights = weights.reduce((a, b) => a + b, 0);
+
+      const table = document.createElement("table");
+
+      const head = document.createElement("thead");
+      const headerRow = document.createElement("tr");
+
+      const headers = [
+        "Line",
+        "Input",
+        "Proportional share",
+        ...(isWholeTotal ? ["Whole units"] : [])
+      ];
+
+      for (const text of headers) {
+        const th = document.createElement("th");
+        th.textContent = text;
+        headerRow.appendChild(th);
+      }
+
+      head.appendChild(headerRow);
+      table.appendChild(head);
+
+      const body = document.createElement("tbody");
+
+      entries.forEach((entry, index) => {
+        const row = document.createElement("tr");
+
+        const lineTd = document.createElement("td");
+        lineTd.textContent = entry.line;
+
+        const inputTd = document.createElement("td");
+        inputTd.textContent = entry.raw;
+
+        const shareTd = document.createElement("td");
+        shareTd.textContent = fmt.format(shares[index]);
+
+        row.append(lineTd, inputTd, shareTd);
+
+        if (isWholeTotal) {
+          const wholeTd = document.createElement("td");
+          wholeTd.textContent = whole[index];
+          row.appendChild(wholeTd);
+        }
+
+        body.appendChild(row);
+      });
+
+      table.appendChild(body);
+      resultEl.appendChild(table);
+
+      const notes = [];
+
+      if (sumWeights === 0) {
+        notes.push("All input numbers are zero, so the total is split equally.");
+      }
+
+      if (isWholeTotal) {
+        notes.push("Whole units are apportioned with the largest-remainder method, so they sum exactly to the total.");
+      }
+
+      if (notes.length > 0) {
+        renderMessage(notes.join("\n"), "note");
+      }
+    }
+
+    totalEl.addEventListener("input", update);
+    numbersEl.addEventListener("input", update);
+
+    update();
+  </script>
+</body>
+</html>
